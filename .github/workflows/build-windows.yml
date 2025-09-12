@@ -25,10 +25,15 @@ jobs:
         cache: true
         
     - name: Enable Windows Desktop
-      run: flutter config --enable-windows-desktop
+      run: |
+        flutter config --enable-windows-desktop
+        flutter config --no-analytics
+        flutter doctor -v
       
     - name: Install dependencies
-      run: flutter pub get
+      run: |
+        flutter pub get
+        flutter pub deps
       
     - name: Run tests
       run: |
@@ -43,7 +48,12 @@ jobs:
       run: flutter analyze
       
     - name: Build Windows app
-      run: flutter build windows --release
+      run: |
+        echo "Starting Windows build..."
+        flutter build windows --release --verbose
+        echo "Build completed. Checking output..."
+        dir build\windows\x64\runner\Release\
+        echo "Build artifacts verified."
       
     - name: Create Windows installer package
       shell: pwsh
