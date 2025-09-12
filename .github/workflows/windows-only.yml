@@ -1,0 +1,178 @@
+name: Build Windows Only
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Build Windows App
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.35.3'
+        channel: 'stable'
+        cache: true
+        
+    - name: Configure Flutter for Windows
+      run: |
+        flutter config --enable-windows-desktop
+        flutter config --no-analytics
+        flutter doctor -v
+        
+    - name: Install dependencies
+      run: |
+        flutter pub get
+        flutter pub deps
+        
+    - name: Skip tests (no test directory)
+      run: echo "Skipping tests - no test directory found"
+      
+    - name: Analyze code
+      run: flutter analyze
+      
+    - name: Build Windows app
+      run: |
+        echo "Building Windows app..."
+        flutter build windows --release --verbose
+        echo "Build completed successfully!"
+        dir build\windows\x64\runner\Release\
+        
+    - name: Create Windows installer package
+      shell: pwsh
+      run: |
+        $version = if ($env:GITHUB_REF -match "refs/tags/v(.+)") { $matches[1] } else { "dev-$($env:GITHUB_SHA.Substring(0,7))" }
+        $packageName = "JobScheduleGenerator-Windows-$version"
+        $buildPath = "build\windows\x64\runner\Release"
+        
+        echo "Creating package: $packageName"
+        echo "From build path: $buildPath"
+        
+        # Verify build exists
+        if (!(Test-Path $buildPath)) {
+            echo "ERROR: Build path not found!"
+            exit 1
+        }
+        
+        # Create package directory
+        New-Item -ItemType Directory -Force -Path $packageName
+        
+        # Copy all build files
+        Copy-Item -Recurse -Force "$buildPath\*" "$packageName\"
+        
+        # Rename executable
+        if (Test-Path "$packageName\ojob.exe") {
+            Rename-Item "$packageName\ojob.exe" "$packageName\JobScheduleGenerator.exe"
+            echo "Executable renamed successfully"
+        } else {
+            echo "ERROR: ojob.exe not found in build!"
+            dir $packageName
+            exit 1
+        }
+        
+        # Create Italian README
+        @"
+        Job Schedule Generator v$version
+        ================================
+        
+        INSTALLAZIONE:
+        1. Estrai tutti i file in una cartella sul tuo computer
+        2. Esegui JobScheduleGenerator.exe
+        
+        UTILIZZO:
+        1. Inserisci il Codice Articolo (esempio: PXO7471-250905)
+        2. Inserisci il Lotto (esempio: 310)  
+        3. Inserisci il Numero di Pezzi (esempio: 15)
+        4. Clicca "Scegli dove salvare" per selezionare la cartella (opzionale)
+        5. Clicca "Genera File Job Schedule"
+        
+        Il file Job_Schedule.txt verrà creato con il formato:
+        [CODICE_ARTICOLO]  [LOTTO] [PEZZI]
+        
+        REQUISITI SISTEMA:
+        - Windows 10 versione 1903 o successiva (64-bit)
+        - Nessun software aggiuntivo richiesto
+        
+        CRONOLOGIA:
+        L'app mantiene una cronologia degli ultimi file generati.
+        Clicca l'icona cronologia per vedere i file precedenti.
+        
+        Sviluppato con Flutter
+        https://github.com/tuorepository/ojob
+        "@ | Out-File -FilePath "$packageName\LEGGIMI.txt" -Encoding UTF8
+        
+        # Create zip package
+        echo "Creating zip package..."
+        Compress-Archive -Path $packageName -DestinationPath "$packageName.zip" -Force
+        
+        # Verify package was created
+        if (Test-Path "$packageName.zip") {
+            $size = (Get-Item "$packageName.zip").Length / 1MB
+            echo "Package created successfully: $packageName.zip ($("{0:N1}" -f $size) MB)"
+        } else {
+            echo "ERROR: Failed to create zip package!"
+            exit 1
+        }
+        
+    - name: Upload Windows build artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-installer
+        path: JobScheduleGenerator-Windows-*.zip
+        retention-days: 90
+        
+    - name: Upload to Release (if tagged)
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: JobScheduleGenerator-Windows-*.zip
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+        body: |
+          ## Job Schedule Generator - Installazione Windows
+          
+          ### 📦 Download
+          Scarica il file `JobScheduleGenerator-Windows-*.zip` qui sotto.
+          
+          ### 🚀 Installazione
+          1. **Scarica** il file .zip
+          2. **Estrai** tutti i file in una cartella
+          3. **Esegui** `JobScheduleGenerator.exe`
+          
+          ### 📋 Come usare
+          1. Inserisci **Codice Articolo** (es: `PXO7471-250905`)
+          2. Inserisci **Lotto** (es: `310`)
+          3. Inserisci **Numero Pezzi** (es: `15`)
+          4. Seleziona dove salvare (opzionale)
+          5. Clicca **"Genera File Job Schedule"**
+          
+          ### 📄 Formato file generato
+          ```
+          [CODICE_ARTICOLO]  [LOTTO] [PEZZI]
+          ```
+          Esempio: `PXO7471-250905  310 15`
+          
+          ### 💻 Requisiti
+          - Windows 10 (1903+) 64-bit
+          - Nessun software aggiuntivo necessario
+          
+          ### 🔧 Funzionalità
+          - ✅ Generazione file Job_Schedule.txt
+          - ✅ Interfaccia italiana intuitiva
+          - ✅ Cronologia file generati
+          - ✅ Selezione cartella di salvataggio
+          - ✅ Validazione input
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

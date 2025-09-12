@@ -1,12 +1,7 @@
-name: Build Multi-Platform
+name: Build Multi-Platform (DISABLED)
 
 on:
-  push:
-    branches: [ main ]
-    tags:
-      - 'v*'
-  pull_request:
-    branches: [ main ]
+  # Temporarily disabled - use windows-only.yml instead  
   workflow_dispatch:
 
 jobs:

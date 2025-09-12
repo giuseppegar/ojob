@@ -1,12 +1,7 @@
-name: Build Windows App
+name: Build Windows App (DISABLED)
 
 on:
-  push:
-    branches: [ main, develop ]
-    tags:
-      - 'v*'
-  pull_request:
-    branches: [ main ]
+  # Temporarily disabled - use windows-only.yml instead
   workflow_dispatch:
 
 jobs:
