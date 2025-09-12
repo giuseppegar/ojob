@@ -26,39 +26,63 @@ jobs:
         cache: true
         
     - name: Configure Flutter for Windows
+      shell: pwsh
       run: |
+        Write-Host "🔧 Configuring Flutter for Windows..." -ForegroundColor Yellow
         flutter config --enable-windows-desktop
         flutter config --no-analytics
+        Write-Host "📋 Checking Flutter setup..." -ForegroundColor Yellow
         flutter doctor -v
         
     - name: Install dependencies
+      shell: pwsh
       run: |
+        Write-Host "📦 Installing dependencies..." -ForegroundColor Yellow
         flutter pub get
+        Write-Host "🔍 Checking dependency tree..." -ForegroundColor Yellow
         flutter pub deps
         
     - name: Skip tests (no test directory)
-      run: echo "Skipping tests - no test directory found"
+      shell: pwsh
+      run: Write-Host "⏭️ Skipping tests - no test directory found" -ForegroundColor Cyan
       
     - name: Analyze code
-      run: flutter analyze
+      shell: pwsh
+      run: |
+        Write-Host "🔍 Analyzing code..." -ForegroundColor Yellow
+        flutter analyze
       
     - name: Build Windows app
+      shell: pwsh
       run: |
-        echo "🔨 Starting Windows build..."
+        Write-Host "🔨 Starting Windows build..." -ForegroundColor Green
         flutter build windows --release --verbose
-        echo "✅ Build process completed!"
-        echo "📂 Checking build artifacts..."
-        dir build\windows\x64\runner\Release\ /w
-        echo "🔍 Verifying executable..."
-        if exist "build\windows\x64\runner\Release\ojob.exe" (
-            echo "✅ ojob.exe found!"
-            for %%i in ("build\windows\x64\runner\Release\ojob.exe") do echo "📏 Size: %%~zi bytes"
-        ) else (
-            echo "❌ ERROR: ojob.exe not found!"
-            echo "📋 Available files:"
-            dir build\windows\x64\runner\Release\ /b
+        Write-Host "✅ Build process completed!" -ForegroundColor Green
+        
+        Write-Host "📂 Checking build artifacts..." -ForegroundColor Yellow
+        $buildPath = "build\windows\x64\runner\Release"
+        
+        if (Test-Path $buildPath) {
+            Write-Host "Build directory found. Contents:" -ForegroundColor Yellow
+            Get-ChildItem $buildPath | Format-Table Name, Length, LastWriteTime -AutoSize
+        } else {
+            Write-Host "❌ ERROR: Build directory not found!" -ForegroundColor Red
             exit 1
-        )
+        }
+        
+        Write-Host "🔍 Verifying executable..." -ForegroundColor Yellow
+        $exePath = "$buildPath\ojob.exe"
+        
+        if (Test-Path $exePath) {
+            $size = (Get-Item $exePath).Length
+            Write-Host "✅ ojob.exe found!" -ForegroundColor Green
+            Write-Host "📏 Size: $size bytes ($([math]::Round($size/1MB,2)) MB)" -ForegroundColor Cyan
+        } else {
+            Write-Host "❌ ERROR: ojob.exe not found!" -ForegroundColor Red
+            Write-Host "📋 Available files in build directory:" -ForegroundColor Yellow
+            Get-ChildItem $buildPath | Select-Object Name, Length | Format-Table
+            exit 1
+        }
         
     - name: Create Windows installer package
       shell: pwsh
