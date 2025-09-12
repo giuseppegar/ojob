@@ -34,6 +34,12 @@ When running with `flutter run`, use:
 ### Icon Generation (if needed)
 - `flutter pub run flutter_launcher_icons:main` - Generate app icons for all platforms
 
+### GitHub Actions (CI/CD)
+- Automatic builds triggered on push to main, tags, and PRs
+- Windows build: `build-windows.yml`
+- Multi-platform build: `build-multi-platform.yml`
+- Release creation: automatic on git tag `v*`
+
 ## Project Structure
 
 ### Key Directories
@@ -57,17 +63,20 @@ When running with `flutter run`, use:
 - **Responsive Design**: Works on mobile, tablet, and desktop with scrollable layout
 
 ### UI Components
-- **Material Design 3**: Uses modern Material Design with custom blue theme (#1976D2)
-- **Card-based Layout**: Clean card interfaces for input sections
+- **Material Design 3**: Modern design with custom gradient theme (#6366F1 to #8B5CF6)
+- **Animated Components**: Smooth fade-in animations using animate_do
+- **Modern Icons**: Phosphor Flutter icons for better visual appeal
+- **Card-based Layout**: Gradient containers with rounded corners and shadows
 - **ScrollView**: Prevents overflow on smaller screens
-- **Snackbar Notifications**: User feedback for success/error states
-- **Modal Dialogs**: History viewing in popup dialog
+- **Enhanced Notifications**: Floating snackbars with emoji indicators
+- **Modern Dialogs**: Custom-styled history dialog with improved UX
 
 ### Dependencies
 - **Core**: Flutter SDK ^3.9.0
 - **File Operations**: file_picker ^8.0.0+1, path_provider ^2.1.2
 - **Data Persistence**: shared_preferences ^2.2.2
-- **Icons**: cupertino_icons ^1.0.8
+- **Icons**: cupertino_icons ^1.0.8, phosphor_flutter ^2.1.0
+- **Animations**: animate_do ^3.3.4
 - **Development**: flutter_test, flutter_lints ^5.0.0, flutter_launcher_icons ^0.13.1
 
 ## File Format Specification
@@ -86,6 +95,16 @@ Example: `PXO7471-250905  310 15`
 - File names are always "Job_Schedule.txt"
 - History is limited to 50 most recent entries
 - App uses SingleChildScrollView to handle different screen sizes
-- Color scheme: Primary blue (#1976D2) with white/light blue accents
+- **Modern Design**: Purple gradient theme (#6366F1 to #8B5CF6) with Material Design 3
+- **Enhanced File Picker**: Improved error handling and user feedback
+- **Animations**: Smooth fade-in/fade-up animations on all UI elements
+- **Custom Icons**: Professional Phosphor icons throughout the interface
 - Input fields have proper keyboard types (text/number)
-- Loading states and error handling implemented
+- Loading states and comprehensive error handling implemented
+- **Custom App Icons**: SVG-based modern icon design with gradient branding
+
+## Design Assets
+
+- `assets/icons/app_icon_1024.svg` - Main app icon design
+- `icon_generator.html` - Icon preview and branding guide
+- Modern gradient color palette with professional styling

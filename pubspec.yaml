@@ -43,6 +43,12 @@ dependencies:
   
   # Shared preferences for history storage
   shared_preferences: ^2.2.2
+  
+  # Animations and modern UI
+  animate_do: ^3.3.4
+  
+  # Better icons
+  phosphor_flutter: ^2.1.0
 
 dev_dependencies:
   flutter_test:
