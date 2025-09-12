@@ -31,7 +31,13 @@ jobs:
       run: flutter pub get
       
     - name: Run tests
-      run: flutter test
+      run: |
+        if [ -d "test" ]; then
+          flutter test
+        else
+          echo "No test directory found, skipping tests"
+        fi
+      shell: bash
       
     - name: Analyze code
       run: flutter analyze
