@@ -372,7 +372,25 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
       String finalPath;
       
       // Determine save location
-      if (_selectedPath.isEmpty) {
+      print('DEBUG: _selectedPath = "$_selectedPath"');
+      
+      // Verifica se il percorso salvato esiste ancora
+      bool pathExists = false;
+      if (_selectedPath.isNotEmpty) {
+        final directory = Directory(_selectedPath);
+        pathExists = await directory.exists();
+        print('DEBUG: path exists = $pathExists');
+        if (!pathExists) {
+          // Percorso salvato non esiste più, resettalo
+          setState(() {
+            _selectedPath = '';
+          });
+          await _savePath('');
+          _showSnackBar('⚠️ Percorso salvato non più valido, seleziona nuovo percorso', const Color(0xFFEA580C));
+        }
+      }
+      
+      if (_selectedPath.isEmpty || !pathExists) {
         try {
           String? defaultPath = await FilePicker.platform.getDirectoryPath(
             dialogTitle: 'Seleziona dove salvare il file',
@@ -436,6 +454,8 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
         }
       } else {
         finalPath = '$_selectedPath/$fileName';
+        print('DEBUG: Using saved path: $finalPath');
+        _showSnackBar('💾 Usando percorso salvato', const Color(0xFF059669));
       }
       
       // Write file
@@ -1071,13 +1091,15 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
             child: const Text('Annulla'),
           ),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               if (codeController.text.trim().isNotEmpty) {
-                _addMasterArticle(
+                await _addMasterArticle(
                   codeController.text.trim(),
                   descriptionController.text.trim(),
                 );
-                Navigator.pop(context);
+                if (context.mounted) Navigator.pop(context);
+                // Forza il refresh dello stato
+                setState(() {});
               }
             },
             child: const Text('Aggiungi'),
@@ -1130,14 +1152,16 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
             child: const Text('Annulla'),
           ),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               if (codeController.text.trim().isNotEmpty) {
-                _updateMasterArticle(
+                await _updateMasterArticle(
                   article.id,
                   codeController.text.trim(),
                   descriptionController.text.trim(),
                 );
-                Navigator.pop(context);
+                if (context.mounted) Navigator.pop(context);
+                // Forza il refresh dello stato
+                setState(() {});
               }
             },
             child: const Text('Salva'),
@@ -1181,9 +1205,11 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
             child: const Text('Annulla'),
           ),
           ElevatedButton(
-            onPressed: () {
-              _deleteMasterArticle(article.id);
-              Navigator.pop(context);
+            onPressed: () async {
+              await _deleteMasterArticle(article.id);
+              if (context.mounted) Navigator.pop(context);
+              // Forza il refresh dello stato
+              setState(() {});
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red.shade600,
