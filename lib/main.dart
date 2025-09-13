@@ -6,6 +6,7 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'dart:convert';
+import 'package:macos_secure_bookmarks/macos_secure_bookmarks.dart';
 
 class MasterArticle {
   final String id;
@@ -37,6 +38,15 @@ class MasterArticle {
       createdAt: DateTime.parse(json['createdAt']),
     );
   }
+}
+
+enum PopupAction { saveAsMaster, manage, selectArticle }
+
+class PopupChoice {
+  final PopupAction action;
+  final MasterArticle? article;
+
+  PopupChoice(this.action, [this.article]);
 }
 
 void main() {
@@ -193,6 +203,7 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
   List<String> _history = [];
   List<MasterArticle> _masterArticles = [];
   bool _isLoading = false;
+  String? _secureBookmarkData;
 
   @override
   void initState() {
@@ -205,18 +216,41 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
     setState(() {
       _history = prefs.getStringList('job_history') ?? [];
       _selectedPath = prefs.getString('saved_path') ?? '';
+      _secureBookmarkData = prefs.getString('secure_bookmark');
     });
+
+    // Se abbiamo un bookmark salvato, proviamo a risolverlo
+    await _restoreSecureBookmark();
     await _loadMasterArticles();
   }
 
   Future<void> _loadMasterArticles() async {
-    final prefs = await SharedPreferences.getInstance();
-    final articlesJson = prefs.getStringList('master_articles') ?? [];
-    setState(() {
-      _masterArticles = articlesJson
-          .map((jsonStr) => MasterArticle.fromJson(jsonDecode(jsonStr)))
-          .toList();
-    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final articlesJson = prefs.getStringList('master_articles') ?? [];
+
+      final loadedArticles = <MasterArticle>[];
+      for (final jsonStr in articlesJson) {
+        try {
+          final article = MasterArticle.fromJson(jsonDecode(jsonStr));
+          loadedArticles.add(article);
+        } catch (e) {
+          // Salta gli articoli corrotti nel JSON, ma continua con gli altri
+          // Log ignorato per non usare print in produzione
+        }
+      }
+
+      setState(() {
+        _masterArticles = loadedArticles;
+        _masterArticles.sort((a, b) => a.code.compareTo(b.code));
+      });
+    } catch (e) {
+      // In caso di errore critico nel caricamento, inizializza lista vuota
+      setState(() {
+        _masterArticles = [];
+      });
+      _showSnackBar('⚠️ Errore caricamento articoli master', const Color(0xFFEA580C));
+    }
   }
 
   Future<void> _saveToHistory(String entry) async {
@@ -231,11 +265,62 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
   Future<void> _savePath(String path) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('saved_path', path);
+
+    // Salva anche il secure bookmark per macOS
+    await _saveSecureBookmark(path);
+  }
+
+  Future<void> _saveSecureBookmark(String path) async {
+    if (!Platform.isMacOS) return;
+
+    try {
+      final secureBookmarks = SecureBookmarks();
+      final directory = Directory(path);
+      final bookmark = await secureBookmarks.bookmark(directory);
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('secure_bookmark', bookmark);
+      _secureBookmarkData = bookmark;
+    } catch (e) {
+      // Se non riusciamo a creare il bookmark, continua comunque
+      // Log l'errore ma continua senza fallire
+    }
+  }
+
+  Future<void> _restoreSecureBookmark() async {
+    if (!Platform.isMacOS || _secureBookmarkData == null) return;
+
+    try {
+      final secureBookmarks = SecureBookmarks();
+      final resolvedUrl = await secureBookmarks.resolveBookmark(_secureBookmarkData!);
+
+      // Verifica che il percorso esista ancora
+      final directory = Directory(resolvedUrl.path);
+      if (await directory.exists()) {
+        setState(() {
+          _selectedPath = resolvedUrl.path;
+        });
+
+        // Aggiorna anche il percorso salvato in SharedPreferences
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('saved_path', resolvedUrl.path);
+      }
+    } catch (e) {
+      // Se il bookmark non è più valido, rimuovilo
+      await _clearSecureBookmark();
+    }
+  }
+
+  Future<void> _clearSecureBookmark() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('secure_bookmark');
+    _secureBookmarkData = null;
   }
 
   Future<void> _clearSavedPath() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('saved_path');
+    await _clearSecureBookmark();
     setState(() {
       _selectedPath = '';
     });
@@ -243,58 +328,107 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
   }
 
   Future<void> _saveMasterArticles() async {
-    final prefs = await SharedPreferences.getInstance();
-    final articlesJson = _masterArticles
-        .map((article) => jsonEncode(article.toJson()))
-        .toList();
-    await prefs.setStringList('master_articles', articlesJson);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final articlesJson = _masterArticles
+          .map((article) => jsonEncode(article.toJson()))
+          .toList();
+
+      final success = await prefs.setStringList('master_articles', articlesJson);
+      if (!success) {
+        throw Exception('Impossibile salvare su SharedPreferences');
+      }
+    } catch (e) {
+      // Rilancia l'eccezione per permettere ai metodi chiamanti di gestirla
+      throw Exception('Errore salvataggio articoli master: ${e.toString()}');
+    }
   }
 
   Future<void> _addMasterArticle(String code, String description) async {
-    final article = MasterArticle(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      code: code.trim(),
-      description: description.trim(),
-      createdAt: DateTime.now(),
-    );
-    
-    setState(() {
+    try {
+      final article = MasterArticle(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        code: code.trim(),
+        description: description.trim(),
+        createdAt: DateTime.now(),
+      );
+
+      // Aggiungi prima alla lista locale
       _masterArticles.add(article);
       _masterArticles.sort((a, b) => a.code.compareTo(b.code));
-    });
-    
-    await _saveMasterArticles();
-    _showSnackBar('✅ Articolo aggiunto: ${article.code}', const Color(0xFF059669));
+
+      // Salva su SharedPreferences
+      await _saveMasterArticles();
+
+      // Aggiorna l'interfaccia solo dopo il salvataggio riuscito
+      setState(() {});
+      _showSnackBar('✅ Articolo aggiunto: ${article.code}', const Color(0xFF059669));
+    } catch (e) {
+      // In caso di errore, rimuovi l'articolo dalla lista locale
+      _masterArticles.removeWhere((a) => a.code == code.trim());
+      _showSnackBar('❌ Errore salvataggio articolo: ${e.toString()}', const Color(0xFFDC2626));
+    }
   }
 
   Future<void> _updateMasterArticle(String id, String code, String description) async {
     final index = _masterArticles.indexWhere((article) => article.id == id);
     if (index != -1) {
-      final updatedArticle = MasterArticle(
-        id: id,
-        code: code.trim(),
-        description: description.trim(),
-        createdAt: _masterArticles[index].createdAt,
-      );
-      
-      setState(() {
+      try {
+        final updatedArticle = MasterArticle(
+          id: id,
+          code: code.trim(),
+          description: description.trim(),
+          createdAt: _masterArticles[index].createdAt,
+        );
+
+        // Aggiorna la lista locale
         _masterArticles[index] = updatedArticle;
         _masterArticles.sort((a, b) => a.code.compareTo(b.code));
-      });
-      
-      await _saveMasterArticles();
-      _showSnackBar('✅ Articolo aggiornato: ${updatedArticle.code}', const Color(0xFF059669));
+
+        // Salva su SharedPreferences
+        await _saveMasterArticles();
+
+        // Aggiorna l'interfaccia solo dopo il salvataggio riuscito
+        setState(() {});
+        _showSnackBar('✅ Articolo aggiornato: ${updatedArticle.code}', const Color(0xFF059669));
+      } catch (e) {
+        // In caso di errore, ripristina l'articolo originale
+        final originalIndex = _masterArticles.indexWhere((article) => article.id == id);
+        if (originalIndex != -1) {
+          // Trova l'articolo originale dalla lista (potrebbe essere cambiata l'indicizzazione)
+          await _loadMasterArticles(); // Ricarica dalla memoria
+        }
+        _showSnackBar('❌ Errore aggiornamento articolo: ${e.toString()}', const Color(0xFFDC2626));
+      }
     }
   }
 
   Future<void> _deleteMasterArticle(String id) async {
-    final article = _masterArticles.firstWhere((article) => article.id == id);
-    setState(() {
-      _masterArticles.removeWhere((article) => article.id == id);
-    });
-    
-    await _saveMasterArticles();
-    _showSnackBar('🗑️ Articolo eliminato: ${article.code}', const Color(0xFFEA580C));
+    try {
+      final articleIndex = _masterArticles.indexWhere((article) => article.id == id);
+      if (articleIndex == -1) {
+        _showSnackBar('❌ Articolo non trovato', const Color(0xFFDC2626));
+        return;
+      }
+
+      // Salva l'articolo per il rollback in caso di errore
+      final deletedArticle = _masterArticles[articleIndex];
+
+      // Rimuovi dalla lista locale
+      _masterArticles.removeAt(articleIndex);
+
+      // Salva su SharedPreferences
+      await _saveMasterArticles();
+
+      // Aggiorna l'interfaccia solo dopo il salvataggio riuscito
+      setState(() {});
+      _showSnackBar('🗑️ Articolo eliminato: ${deletedArticle.code}', const Color(0xFFEA580C));
+    } catch (e) {
+      // In caso di errore, ricarica gli articoli dalla memoria
+      await _loadMasterArticles();
+      setState(() {});
+      _showSnackBar('❌ Errore eliminazione articolo: ${e.toString()}', const Color(0xFFDC2626));
+    }
   }
 
   void _selectMasterArticle(MasterArticle article) {
@@ -367,6 +501,13 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
       final String lotto = _lottoController.text.trim();
       final String pezzi = _numeroPezziController.text.trim();
       final String content = '$codice\t$lotto\t$pezzi';
+
+      // Debug: verifica che i TAB siano presenti
+      final tabCount = '\t'.allMatches(content).length;
+      if (tabCount != 2) {
+        _showSnackBar('⚠️ Errore formato: TAB mancanti ($tabCount/2)', const Color(0xFFEA580C));
+        return;
+      }
       final String fileName = 'Job_Schedule.txt';
       
       String finalPath;
@@ -376,28 +517,73 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
       // Verifica se il percorso salvato esiste e ha permessi di scrittura
       bool pathExists = false;
       bool hasWritePermission = false;
+
       if (_selectedPath.isNotEmpty) {
-        final directory = Directory(_selectedPath);
-        pathExists = await directory.exists();
-        
-        if (pathExists) {
-          // Testa i permessi di scrittura creando un file temporaneo
+        // Su macOS, se abbiamo un secure bookmark, proviamo prima a ripristinarlo
+        if (Platform.isMacOS && _secureBookmarkData != null) {
           try {
-            final testFile = File('$_selectedPath/.test_write_permission');
-            await testFile.writeAsString('test');
-            await testFile.delete();
-            hasWritePermission = true;
+            final secureBookmarks = SecureBookmarks();
+            final resolvedUrl = await secureBookmarks.resolveBookmark(_secureBookmarkData!);
+
+            // Avvia l'accesso sicuro alla risorsa
+            final startedAccessing = await secureBookmarks.startAccessingSecurityScopedResource(resolvedUrl);
+
+            if (startedAccessing) {
+              final directory = Directory(resolvedUrl.path);
+              pathExists = await directory.exists();
+
+              if (pathExists) {
+                // Aggiorna il percorso con quello risolto dal bookmark
+                if (_selectedPath != resolvedUrl.path) {
+                  setState(() {
+                    _selectedPath = resolvedUrl.path;
+                  });
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.setString('saved_path', resolvedUrl.path);
+                }
+
+                // Testa i permessi di scrittura
+                try {
+                  final testFile = File('$_selectedPath/.test_write_permission');
+                  await testFile.writeAsString('test');
+                  await testFile.delete();
+                  hasWritePermission = true;
+                } catch (e) {
+                  hasWritePermission = false;
+                }
+              }
+            }
           } catch (e) {
-            hasWritePermission = false;
+            // Se il bookmark non è più valido, cancellalo
+            await _clearSecureBookmark();
           }
         }
-        
+
+        // Fallback per sistemi non-macOS o se il bookmark non ha funzionato
+        if (!pathExists) {
+          final directory = Directory(_selectedPath);
+          pathExists = await directory.exists();
+
+          if (pathExists) {
+            // Testa i permessi di scrittura
+            try {
+              final testFile = File('$_selectedPath/.test_write_permission');
+              await testFile.writeAsString('test');
+              await testFile.delete();
+              hasWritePermission = true;
+            } catch (e) {
+              hasWritePermission = false;
+            }
+          }
+        }
+
         if (!pathExists || !hasWritePermission) {
           // Percorso salvato non esiste più o non ha permessi, resettalo
           setState(() {
             _selectedPath = '';
           });
           await _savePath('');
+          await _clearSecureBookmark();
           if (!pathExists) {
             _showSnackBar('⚠️ Percorso salvato non più valido, seleziona nuovo percorso', const Color(0xFFEA580C));
           } else {
@@ -476,16 +662,35 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
       // Write file
       final file = File(finalPath);
       await file.writeAsString(content, flush: true);
-      
-      // Verify file was written
-      if (await file.exists()) {
-        // Add to history
-        final historyEntry = '${DateTime.now().toString().split('.')[0]} - $content';
-        await _saveToHistory(historyEntry);
-        setState(() {});
 
-        _showSnackBar('✅ File "$fileName" salvato con successo!', const Color(0xFF059669));
-        _clearFields();
+      // Su macOS, ferma l'accesso alla risorsa sicura se era stata avviata
+      if (Platform.isMacOS && _secureBookmarkData != null) {
+        try {
+          final secureBookmarks = SecureBookmarks();
+          final resolvedUrl = await secureBookmarks.resolveBookmark(_secureBookmarkData!);
+          await secureBookmarks.stopAccessingSecurityScopedResource(resolvedUrl);
+        } catch (e) {
+          // Ignora errori nel fermare l'accesso
+        }
+      }
+      
+      // Verify file was written and content is correct
+      if (await file.exists()) {
+        // Verifica che il contenuto sia stato scritto correttamente
+        final savedContent = await file.readAsString();
+        final savedTabCount = '\t'.allMatches(savedContent).length;
+
+        if (savedTabCount != 2) {
+          _showSnackBar('⚠️ File salvato ma formato TAB scorretto ($savedTabCount/2)', const Color(0xFFEA580C));
+        } else {
+          // Add to history
+          final historyEntry = '${DateTime.now().toString().split('.')[0]} - $content';
+          await _saveToHistory(historyEntry);
+          setState(() {});
+
+          _showSnackBar('✅ File "$fileName" salvato con formato corretto!', const Color(0xFF059669));
+          _clearFields();
+        }
       } else {
         throw Exception('File non trovato dopo la scrittura');
       }
@@ -581,7 +786,7 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
                     color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
                   ),
                 ),
-                child: PopupMenuButton<MasterArticle?>(
+                child: PopupMenuButton<PopupChoice?>(
                   icon: Icon(
                     PhosphorIcons.package(),
                     color: Theme.of(context).colorScheme.primary,
@@ -593,15 +798,49 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
                   itemBuilder: (context) {
                     if (_masterArticles.isEmpty) {
                       return [
-                        PopupMenuItem<MasterArticle?>(
+                        // Se c'è del testo nel campo, mostra l'opzione di salvataggio rapido
+                        if (_codiceArticoloController.text.trim().isNotEmpty)
+                          PopupMenuItem<PopupChoice?>(
+                            value: PopupChoice(PopupAction.saveAsMaster),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  PhosphorIcons.floppyDisk(),
+                                  size: 16,
+                                  color: Colors.green.shade600,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Text('Salva come Master'),
+                                      Text(
+                                        '"${_codiceArticoloController.text.trim()}"',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: Colors.grey.shade600,
+                                          fontStyle: FontStyle.italic,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        if (_codiceArticoloController.text.trim().isNotEmpty)
+                          const PopupMenuDivider(),
+                        PopupMenuItem<PopupChoice?>(
                           enabled: false,
                           child: Text(
                             'Nessun articolo master',
                             style: TextStyle(color: Colors.grey.shade600),
                           ),
                         ),
-                        PopupMenuItem<MasterArticle?>(
-                          value: null,
+                        PopupMenuItem<PopupChoice?>(
+                          value: PopupChoice(PopupAction.manage),
                           child: Row(
                             children: [
                               Icon(
@@ -618,8 +857,42 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
                     }
 
                     return [
-                      PopupMenuItem<MasterArticle?>(
-                        value: null,
+                      // Opzione per salvare il codice corrente come master
+                      if (_codiceArticoloController.text.trim().isNotEmpty)
+                        PopupMenuItem<PopupChoice?>(
+                          value: PopupChoice(PopupAction.saveAsMaster),
+                          child: Row(
+                            children: [
+                              Icon(
+                                PhosphorIcons.floppyDisk(),
+                                size: 16,
+                                color: Colors.green.shade600,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Text('Salva come Master'),
+                                    Text(
+                                      '"${_codiceArticoloController.text.trim()}"',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey.shade600,
+                                        fontStyle: FontStyle.italic,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (_codiceArticoloController.text.trim().isNotEmpty)
+                        const PopupMenuDivider(),
+                      PopupMenuItem<PopupChoice?>(
+                        value: PopupChoice(PopupAction.manage),
                         child: Row(
                           children: [
                             Icon(
@@ -633,8 +906,8 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
                         ),
                       ),
                       const PopupMenuDivider(),
-                      ..._masterArticles.map((article) => PopupMenuItem<MasterArticle?>(
-                        value: article,
+                      ..._masterArticles.map((article) => PopupMenuItem<PopupChoice?>(
+                        value: PopupChoice(PopupAction.selectArticle, article),
                         child: Row(
                           children: [
                             Icon(
@@ -673,13 +946,19 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
                       )),
                     ];
                   },
-                  onSelected: (article) {
-                    if (article == null) {
-                      // Se nessun articolo è selezionato, apri la gestione
+                  onSelected: (choice) {
+                    if (choice?.action == PopupAction.saveAsMaster) {
+                      // Salva il testo corrente come nuovo articolo master
+                      final currentCode = _codiceArticoloController.text.trim();
+                      if (currentCode.isNotEmpty) {
+                        _showQuickSaveMasterDialog(currentCode);
+                      }
+                    } else if (choice?.action == PopupAction.manage) {
+                      // Apri il dialog di gestione
                       _showMasterArticlesDialog();
-                    } else {
+                    } else if (choice?.action == PopupAction.selectArticle && choice?.article != null) {
                       // Seleziona l'articolo
-                      _selectMasterArticle(article);
+                      _selectMasterArticle(choice!.article!);
                     }
                   },
                 ),
@@ -1061,6 +1340,72 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
     );
   }
 
+  void _showQuickSaveMasterDialog(String prefilledCode) {
+    final TextEditingController codeController = TextEditingController(text: prefilledCode);
+    final TextEditingController descriptionController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Icon(
+              PhosphorIcons.floppyDisk(),
+              color: Colors.green.shade600,
+            ),
+            const SizedBox(width: 12),
+            const Text('Salva come Master'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: codeController,
+              decoration: const InputDecoration(
+                labelText: 'Codice Articolo',
+                hintText: 'es. PXO7471-250905',
+              ),
+              textCapitalization: TextCapitalization.characters,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: descriptionController,
+              decoration: const InputDecoration(
+                labelText: 'Descrizione (opzionale)',
+                hintText: 'es. Flangia standard 250mm',
+              ),
+              autofocus: true, // Focus sulla descrizione per inserimento rapido
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Annulla'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () async {
+              if (codeController.text.trim().isNotEmpty) {
+                await _addMasterArticle(
+                  codeController.text.trim(),
+                  descriptionController.text.trim(),
+                );
+                if (context.mounted) Navigator.pop(context);
+              }
+            },
+            icon: Icon(PhosphorIcons.floppyDisk(), size: 16),
+            label: const Text('Salva'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green.shade600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showAddArticleDialog() {
     final TextEditingController codeController = TextEditingController();
     final TextEditingController descriptionController = TextEditingController();
@@ -1113,8 +1458,6 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
                   descriptionController.text.trim(),
                 );
                 if (context.mounted) Navigator.pop(context);
-                // Forza il refresh dello stato
-                setState(() {});
               }
             },
             child: const Text('Aggiungi'),
@@ -1175,8 +1518,6 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
                   descriptionController.text.trim(),
                 );
                 if (context.mounted) Navigator.pop(context);
-                // Forza il refresh dello stato
-                setState(() {});
               }
             },
             child: const Text('Salva'),
@@ -1223,8 +1564,6 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
             onPressed: () async {
               await _deleteMasterArticle(article.id);
               if (context.mounted) Navigator.pop(context);
-              // Forza il refresh dello stato
-              setState(() {});
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red.shade600,
