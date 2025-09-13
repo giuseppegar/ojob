@@ -242,7 +242,7 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
       final String codice = _codiceArticoloController.text.trim();
       final String lotto = _lottoController.text.trim();
       final String pezzi = _numeroPezziController.text.trim();
-      final String content = '$codice  $lotto $pezzi';
+      final String content = '$codice\t$lotto\t$pezzi';
       final String fileName = 'Job_Schedule.txt';
       
       String finalPath;
@@ -635,7 +635,7 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                'Inserisci i dati per generare il file con formato: [CODICE]  [LOTTO] [PEZZI]',
+                                'Inserisci i dati per generare il file con formato: [CODICE]→[LOTTO]→[PEZZI] (separati da TAB)',
                                 style: Theme.of(context).textTheme.bodyMedium,
                               ),
                             ],

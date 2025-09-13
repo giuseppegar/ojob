@@ -143,7 +143,8 @@ jobs:
         5. Clicca "Genera File Job Schedule"
         
         Il file Job_Schedule.txt verrà creato con il formato:
-        [CODICE_ARTICOLO]  [LOTTO] [PEZZI]
+        [CODICE_ARTICOLO]	[LOTTO]	[PEZZI]
+        (campi separati da caratteri TAB)
         
         REQUISITI SISTEMA:
         - Windows 10 versione 1903 o successiva (64-bit)
@@ -215,9 +216,9 @@ jobs:
           
           ### 📄 Formato file generato
           ```
-          [CODICE_ARTICOLO]  [LOTTO] [PEZZI]
+          [CODICE_ARTICOLO]	[LOTTO]	[PEZZI]
           ```
-          Esempio: `PXO7471-250905  310 15`
+          Esempio: `PXO7471-250905	310	15` (separati da TAB)
           
           ### 💻 Requisiti
           - Windows 10 (1903+) 64-bit

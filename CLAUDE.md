@@ -83,11 +83,11 @@ When running with `flutter run`, use:
 
 Generated files follow this exact format:
 ```
-[ARTICLE_CODE]  [LOT] [PIECES]
+[ARTICLE_CODE]	[LOT]	[PIECES]
 ```
-Example: `PXO7471-250905  310 15`
+Example: `PXO7471-250905	310	15`
 
-**Important**: Two spaces between article code and lot, single space between lot and pieces.
+**Important**: TAB characters between all fields (article code, lot, and pieces).
 
 ## Development Notes
 
