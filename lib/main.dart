@@ -372,25 +372,41 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
       String finalPath;
       
       // Determine save location
-      print('DEBUG: _selectedPath = "$_selectedPath"');
       
-      // Verifica se il percorso salvato esiste ancora
+      // Verifica se il percorso salvato esiste e ha permessi di scrittura
       bool pathExists = false;
+      bool hasWritePermission = false;
       if (_selectedPath.isNotEmpty) {
         final directory = Directory(_selectedPath);
         pathExists = await directory.exists();
-        print('DEBUG: path exists = $pathExists');
-        if (!pathExists) {
-          // Percorso salvato non esiste più, resettalo
+        
+        if (pathExists) {
+          // Testa i permessi di scrittura creando un file temporaneo
+          try {
+            final testFile = File('$_selectedPath/.test_write_permission');
+            await testFile.writeAsString('test');
+            await testFile.delete();
+            hasWritePermission = true;
+          } catch (e) {
+            hasWritePermission = false;
+          }
+        }
+        
+        if (!pathExists || !hasWritePermission) {
+          // Percorso salvato non esiste più o non ha permessi, resettalo
           setState(() {
             _selectedPath = '';
           });
           await _savePath('');
-          _showSnackBar('⚠️ Percorso salvato non più valido, seleziona nuovo percorso', const Color(0xFFEA580C));
+          if (!pathExists) {
+            _showSnackBar('⚠️ Percorso salvato non più valido, seleziona nuovo percorso', const Color(0xFFEA580C));
+          } else {
+            _showSnackBar('⚠️ Nessun permesso di scrittura su percorso salvato, seleziona nuovamente', const Color(0xFFEA580C));
+          }
         }
       }
       
-      if (_selectedPath.isEmpty || !pathExists) {
+      if (_selectedPath.isEmpty || !pathExists || !hasWritePermission) {
         try {
           String? defaultPath = await FilePicker.platform.getDirectoryPath(
             dialogTitle: 'Seleziona dove salvare il file',
@@ -454,7 +470,6 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
         }
       } else {
         finalPath = '$_selectedPath/$fileName';
-        print('DEBUG: Using saved path: $finalPath');
         _showSnackBar('💾 Usando percorso salvato', const Color(0xFF059669));
       }
       
