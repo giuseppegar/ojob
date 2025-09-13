@@ -170,6 +170,7 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _history = prefs.getStringList('job_history') ?? [];
+      _selectedPath = prefs.getString('saved_path') ?? '';
     });
   }
 
@@ -182,6 +183,20 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
     await prefs.setStringList('job_history', _history);
   }
 
+  Future<void> _savePath(String path) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('saved_path', path);
+  }
+
+  Future<void> _clearSavedPath() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('saved_path');
+    setState(() {
+      _selectedPath = '';
+    });
+    _showSnackBar('✅ Percorso salvato rimosso', const Color(0xFF059669));
+  }
+
   Future<void> _selectSaveLocation() async {
     try {
       String? selectedDirectory = await FilePicker.platform.getDirectoryPath(
@@ -192,7 +207,8 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
         setState(() {
           _selectedPath = selectedDirectory;
         });
-        _showSnackBar('✅ Percorso selezionato con successo', const Color(0xFF059669));
+        await _savePath(selectedDirectory);
+        _showSnackBar('✅ Percorso selezionato e salvato', const Color(0xFF059669));
       } else {
         _showSnackBar('ℹ️ Selezione annullata', const Color(0xFF64748B));
       }
@@ -214,7 +230,8 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
           setState(() {
             _selectedPath = downloadsDir!.path;
           });
-          _showSnackBar('✅ Cartella Downloads selezionata (fallback)', const Color(0xFF059669));
+          await _savePath(downloadsDir.path);
+          _showSnackBar('✅ Cartella Downloads selezionata e salvata', const Color(0xFF059669));
         } else {
           _showSnackBar('❌ Impossibile selezionare cartella', const Color(0xFFDC2626));
         }
@@ -754,16 +771,38 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: _selectSaveLocation,
-                        icon: Icon(PhosphorIcons.folderOpen()),
-                        label: const Text('Scegli Cartella'),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
+                    Row(
+                      children: [
+                        Expanded(
+                          flex: 2,
+                          child: OutlinedButton.icon(
+                            onPressed: _selectSaveLocation,
+                            icon: Icon(PhosphorIcons.folderOpen()),
+                            label: const Text('Scegli Cartella'),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                            ),
+                          ),
                         ),
-                      ),
+                        if (_selectedPath.isNotEmpty) ...[
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: _clearSavedPath,
+                              icon: Icon(
+                                PhosphorIcons.x(),
+                                size: 18,
+                              ),
+                              label: const Text('Reset'),
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                foregroundColor: Colors.orange.shade700,
+                                side: BorderSide(color: Colors.orange.shade300),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ],
                 ),
