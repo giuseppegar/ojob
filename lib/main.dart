@@ -5,6 +5,39 @@ import 'package:animate_do/animate_do.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
+import 'dart:convert';
+
+class MasterArticle {
+  final String id;
+  final String code;
+  final String description;
+  final DateTime createdAt;
+
+  MasterArticle({
+    required this.id,
+    required this.code,
+    required this.description,
+    required this.createdAt,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'code': code,
+      'description': description,
+      'createdAt': createdAt.toIso8601String(),
+    };
+  }
+
+  factory MasterArticle.fromJson(Map<String, dynamic> json) {
+    return MasterArticle(
+      id: json['id'],
+      code: json['code'],
+      description: json['description'],
+      createdAt: DateTime.parse(json['createdAt']),
+    );
+  }
+}
 
 void main() {
   runApp(const JobScheduleApp());
@@ -158,6 +191,7 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
   
   String _selectedPath = '';
   List<String> _history = [];
+  List<MasterArticle> _masterArticles = [];
   bool _isLoading = false;
 
   @override
@@ -171,6 +205,17 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
     setState(() {
       _history = prefs.getStringList('job_history') ?? [];
       _selectedPath = prefs.getString('saved_path') ?? '';
+    });
+    await _loadMasterArticles();
+  }
+
+  Future<void> _loadMasterArticles() async {
+    final prefs = await SharedPreferences.getInstance();
+    final articlesJson = prefs.getStringList('master_articles') ?? [];
+    setState(() {
+      _masterArticles = articlesJson
+          .map((jsonStr) => MasterArticle.fromJson(jsonDecode(jsonStr)))
+          .toList();
     });
   }
 
@@ -195,6 +240,68 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
       _selectedPath = '';
     });
     _showSnackBar('✅ Percorso salvato rimosso', const Color(0xFF059669));
+  }
+
+  Future<void> _saveMasterArticles() async {
+    final prefs = await SharedPreferences.getInstance();
+    final articlesJson = _masterArticles
+        .map((article) => jsonEncode(article.toJson()))
+        .toList();
+    await prefs.setStringList('master_articles', articlesJson);
+  }
+
+  Future<void> _addMasterArticle(String code, String description) async {
+    final article = MasterArticle(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      code: code.trim(),
+      description: description.trim(),
+      createdAt: DateTime.now(),
+    );
+    
+    setState(() {
+      _masterArticles.add(article);
+      _masterArticles.sort((a, b) => a.code.compareTo(b.code));
+    });
+    
+    await _saveMasterArticles();
+    _showSnackBar('✅ Articolo aggiunto: ${article.code}', const Color(0xFF059669));
+  }
+
+  Future<void> _updateMasterArticle(String id, String code, String description) async {
+    final index = _masterArticles.indexWhere((article) => article.id == id);
+    if (index != -1) {
+      final updatedArticle = MasterArticle(
+        id: id,
+        code: code.trim(),
+        description: description.trim(),
+        createdAt: _masterArticles[index].createdAt,
+      );
+      
+      setState(() {
+        _masterArticles[index] = updatedArticle;
+        _masterArticles.sort((a, b) => a.code.compareTo(b.code));
+      });
+      
+      await _saveMasterArticles();
+      _showSnackBar('✅ Articolo aggiornato: ${updatedArticle.code}', const Color(0xFF059669));
+    }
+  }
+
+  Future<void> _deleteMasterArticle(String id) async {
+    final article = _masterArticles.firstWhere((article) => article.id == id);
+    setState(() {
+      _masterArticles.removeWhere((article) => article.id == id);
+    });
+    
+    await _saveMasterArticles();
+    _showSnackBar('🗑️ Articolo eliminato: ${article.code}', const Color(0xFFEA580C));
+  }
+
+  void _selectMasterArticle(MasterArticle article) {
+    setState(() {
+      _codiceArticoloController.text = article.code;
+    });
+    _showSnackBar('📋 Articolo selezionato: ${article.code}', const Color(0xFF059669));
   }
 
   Future<void> _selectSaveLocation() async {
@@ -409,6 +516,187 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
     );
   }
 
+  Widget _buildCodeField() {
+    return FadeInUp(
+      delay: const Duration(milliseconds: 200),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _codiceArticoloController,
+                  decoration: InputDecoration(
+                    labelText: 'Codice Articolo',
+                    hintText: 'es. PXO7471-250905',
+                    prefixIcon: Icon(
+                      PhosphorIcons.tag(),
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Container(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: PopupMenuButton<MasterArticle?>(
+                  icon: Icon(
+                    PhosphorIcons.package(),
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  tooltip: 'Articoli Master',
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  itemBuilder: (context) {
+                    if (_masterArticles.isEmpty) {
+                      return [
+                        PopupMenuItem<MasterArticle?>(
+                          enabled: false,
+                          child: Text(
+                            'Nessun articolo master',
+                            style: TextStyle(color: Colors.grey.shade600),
+                          ),
+                        ),
+                        PopupMenuItem<MasterArticle?>(
+                          value: null,
+                          child: Row(
+                            children: [
+                              Icon(
+                                PhosphorIcons.plus(),
+                                size: 16,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                              const SizedBox(width: 8),
+                              const Text('Aggiungi primo articolo'),
+                            ],
+                          ),
+                        ),
+                      ];
+                    }
+
+                    return [
+                      PopupMenuItem<MasterArticle?>(
+                        value: null,
+                        child: Row(
+                          children: [
+                            Icon(
+                              PhosphorIcons.gear(),
+                              size: 16,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                            const SizedBox(width: 8),
+                            const Text('Gestisci articoli'),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuDivider(),
+                      ..._masterArticles.map((article) => PopupMenuItem<MasterArticle?>(
+                        value: article,
+                        child: Row(
+                          children: [
+                            Icon(
+                              PhosphorIcons.package(),
+                              size: 16,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    article.code,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                  if (article.description.isNotEmpty)
+                                    Text(
+                                      article.description,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      )),
+                    ];
+                  },
+                  onSelected: (article) {
+                    if (article == null) {
+                      // Se nessun articolo è selezionato, apri la gestione
+                      _showMasterArticlesDialog();
+                    } else {
+                      // Seleziona l'articolo
+                      _selectMasterArticle(article);
+                    }
+                  },
+                ),
+              ),
+            ],
+          ),
+          if (_masterArticles.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              children: _masterArticles.take(3).map((article) {
+                return GestureDetector(
+                  onTap: () => _selectMasterArticle(article),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          PhosphorIcons.package(),
+                          size: 12,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          article.code,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Theme.of(context).colorScheme.primary,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   void _showHistoryDialog() {
     showDialog(
       context: context,
@@ -544,6 +832,369 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
     );
   }
 
+  void _showMasterArticlesDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+        ),
+        child: Container(
+          width: double.maxFinite,
+          constraints: const BoxConstraints(maxHeight: 700),
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Icon(
+                      PhosphorIcons.package(),
+                      color: Theme.of(context).colorScheme.primary,
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Articoli Master',
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                        Text(
+                          '${_masterArticles.length} articoli salvati',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => _showAddArticleDialog(),
+                    icon: Icon(
+                      PhosphorIcons.plus(),
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    tooltip: 'Aggiungi articolo',
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: Icon(
+                      PhosphorIcons.x(),
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Flexible(
+                child: _masterArticles.isEmpty
+                    ? Container(
+                        height: 200,
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade50,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: Colors.grey.shade200),
+                        ),
+                        child: Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                PhosphorIcons.package(),
+                                size: 48,
+                                color: Colors.grey.shade400,
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                'Nessun articolo master ancora',
+                                style: TextStyle(
+                                  color: Colors.grey.shade600,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              TextButton.icon(
+                                onPressed: () => _showAddArticleDialog(),
+                                icon: Icon(PhosphorIcons.plus()),
+                                label: const Text('Aggiungi primo articolo'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                    : ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: _masterArticles.length,
+                        separatorBuilder: (context, index) => const SizedBox(height: 8),
+                        itemBuilder: (context, index) {
+                          final article = _masterArticles[index];
+                          return Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade50,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.grey.shade200),
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Icon(
+                                    PhosphorIcons.package(),
+                                    color: Theme.of(context).colorScheme.primary,
+                                    size: 16,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        article.code,
+                                        style: const TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      if (article.description.isNotEmpty) ...[
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          article.description,
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.grey.shade600,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                                IconButton(
+                                  onPressed: () {
+                                    _selectMasterArticle(article);
+                                    Navigator.pop(context);
+                                  },
+                                  icon: Icon(
+                                    PhosphorIcons.check(),
+                                    color: Colors.green.shade600,
+                                    size: 18,
+                                  ),
+                                  tooltip: 'Usa questo articolo',
+                                ),
+                                IconButton(
+                                  onPressed: () => _showEditArticleDialog(article),
+                                  icon: Icon(
+                                    PhosphorIcons.pencil(),
+                                    color: Colors.orange.shade600,
+                                    size: 18,
+                                  ),
+                                  tooltip: 'Modifica',
+                                ),
+                                IconButton(
+                                  onPressed: () => _confirmDeleteArticle(article),
+                                  icon: Icon(
+                                    PhosphorIcons.trash(),
+                                    color: Colors.red.shade600,
+                                    size: 18,
+                                  ),
+                                  tooltip: 'Elimina',
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showAddArticleDialog() {
+    final TextEditingController codeController = TextEditingController();
+    final TextEditingController descriptionController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Icon(
+              PhosphorIcons.plus(),
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            const SizedBox(width: 12),
+            const Text('Nuovo Articolo Master'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: codeController,
+              decoration: const InputDecoration(
+                labelText: 'Codice Articolo',
+                hintText: 'es. PXO7471-250905',
+              ),
+              textCapitalization: TextCapitalization.characters,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: descriptionController,
+              decoration: const InputDecoration(
+                labelText: 'Descrizione (opzionale)',
+                hintText: 'es. Flangia standard 250mm',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Annulla'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (codeController.text.trim().isNotEmpty) {
+                _addMasterArticle(
+                  codeController.text.trim(),
+                  descriptionController.text.trim(),
+                );
+                Navigator.pop(context);
+              }
+            },
+            child: const Text('Aggiungi'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showEditArticleDialog(MasterArticle article) {
+    final TextEditingController codeController = TextEditingController(text: article.code);
+    final TextEditingController descriptionController = TextEditingController(text: article.description);
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Icon(
+              PhosphorIcons.pencil(),
+              color: Colors.orange.shade600,
+            ),
+            const SizedBox(width: 12),
+            const Text('Modifica Articolo'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: codeController,
+              decoration: const InputDecoration(
+                labelText: 'Codice Articolo',
+              ),
+              textCapitalization: TextCapitalization.characters,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: descriptionController,
+              decoration: const InputDecoration(
+                labelText: 'Descrizione',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Annulla'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (codeController.text.trim().isNotEmpty) {
+                _updateMasterArticle(
+                  article.id,
+                  codeController.text.trim(),
+                  descriptionController.text.trim(),
+                );
+                Navigator.pop(context);
+              }
+            },
+            child: const Text('Salva'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmDeleteArticle(MasterArticle article) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Icon(
+              PhosphorIcons.warning(),
+              color: Colors.red.shade600,
+            ),
+            const SizedBox(width: 12),
+            const Text('Conferma Eliminazione'),
+          ],
+        ),
+        content: RichText(
+          text: TextSpan(
+            style: Theme.of(context).textTheme.bodyMedium,
+            children: [
+              const TextSpan(text: 'Sei sicuro di voler eliminare l\'articolo '),
+              TextSpan(
+                text: article.code,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const TextSpan(text: '?'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Annulla'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              _deleteMasterArticle(article.id);
+              Navigator.pop(context);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red.shade600,
+            ),
+            child: const Text('Elimina'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -661,13 +1312,7 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
                       ],
                     ),
                     const SizedBox(height: 24),
-                    _buildInputField(
-                      controller: _codiceArticoloController,
-                      label: 'Codice Articolo',
-                      hint: 'es. PXO7471-250905',
-                      icon: PhosphorIcons.tag(),
-                      delay: 200,
-                    ),
+                    _buildCodeField(),
                     const SizedBox(height: 20),
                     _buildInputField(
                       controller: _lottoController,
