@@ -7,6 +7,9 @@ import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'dart:convert';
 import 'package:macos_secure_bookmarks/macos_secure_bookmarks.dart';
+import 'package:csv/csv.dart';
+import 'package:path/path.dart' as path_lib;
+import 'dart:async';
 
 class MasterArticle {
   final String id;
@@ -36,6 +39,71 @@ class MasterArticle {
       code: json['code'],
       description: json['description'],
       createdAt: DateTime.parse(json['createdAt']),
+    );
+  }
+}
+
+class RejectDetail {
+  final String station;
+  final String code;
+  final String description;
+  final DateTime timestamp;
+  final String progressivo;
+
+  RejectDetail({
+    required this.station,
+    required this.code,
+    required this.description,
+    required this.timestamp,
+    required this.progressivo,
+  });
+}
+
+class QualityData {
+  final int totalPieces;
+  final int goodPieces;
+  final int rejectedPieces;
+  final List<Reject> rejects;
+  final List<RejectDetail> latestRejects;
+  final DateTime lastUpdate;
+
+  QualityData({
+    required this.totalPieces,
+    required this.goodPieces,
+    required this.rejectedPieces,
+    required this.rejects,
+    required this.latestRejects,
+    required this.lastUpdate,
+  });
+
+  double get rejectionRate => totalPieces > 0 ? (rejectedPieces / totalPieces) * 100 : 0;
+  double get acceptanceRate => totalPieces > 0 ? (goodPieces / totalPieces) * 100 : 0;
+}
+
+class Reject {
+  final String reason;
+  final int count;
+  final DateTime timestamp;
+
+  Reject({
+    required this.reason,
+    required this.count,
+    required this.timestamp,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'reason': reason,
+      'count': count,
+      'timestamp': timestamp.toIso8601String(),
+    };
+  }
+
+  factory Reject.fromJson(Map<String, dynamic> json) {
+    return Reject(
+      reason: json['reason'],
+      count: json['count'],
+      timestamp: DateTime.parse(json['timestamp']),
     );
   }
 }
@@ -182,7 +250,83 @@ class JobScheduleApp extends StatelessWidget {
           ),
         ),
       ),
-      home: const JobScheduleHomePage(),
+      home: const MainTabView(),
+    );
+  }
+}
+
+class MainTabView extends StatefulWidget {
+  const MainTabView({super.key});
+
+  @override
+  State<MainTabView> createState() => _MainTabViewState();
+}
+
+class _MainTabViewState extends State<MainTabView> with TickerProviderStateMixin {
+  late TabController _tabController;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      appBar: AppBar(
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                PhosphorIcons.fileText(),
+                color: Colors.white,
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 12),
+            const Text('Job Schedule'),
+          ],
+        ),
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: [
+            Tab(
+              icon: Icon(PhosphorIcons.fileText()),
+              text: 'Genera File',
+            ),
+            Tab(
+              icon: Icon(PhosphorIcons.chartLine()),
+              text: 'Monitoraggio',
+            ),
+          ],
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: const [
+          JobScheduleHomePage(),
+          QualityMonitoringPage(),
+        ],
+      ),
     );
   }
 }
@@ -204,6 +348,34 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
   List<MasterArticle> _masterArticles = [];
   bool _isLoading = false;
   String? _secureBookmarkData;
+
+  // Helper methods for platform detection that work on web
+  bool _isMacOS() {
+    try {
+      return Platform.isMacOS;
+    } catch (e) {
+      // On web, Platform is not available, assume false
+      return false;
+    }
+  }
+
+  bool _isDesktopPlatform() {
+    try {
+      return Platform.isMacOS || Platform.isLinux || Platform.isWindows;
+    } catch (e) {
+      // On web, assume it's a desktop-like environment
+      return true;
+    }
+  }
+
+  String? _getHomeDirectory() {
+    try {
+      return Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+    } catch (e) {
+      // On web, return null
+      return null;
+    }
+  }
 
   @override
   void initState() {
@@ -271,7 +443,7 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
   }
 
   Future<void> _saveSecureBookmark(String path) async {
-    if (!Platform.isMacOS) return;
+    if (!_isMacOS()) return;
 
     try {
       final secureBookmarks = SecureBookmarks();
@@ -288,7 +460,7 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
   }
 
   Future<void> _restoreSecureBookmark() async {
-    if (!Platform.isMacOS || _secureBookmarkData == null) return;
+    if (!_isMacOS() || _secureBookmarkData == null) return;
 
     try {
       final secureBookmarks = SecureBookmarks();
@@ -520,7 +692,7 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
 
       if (_selectedPath.isNotEmpty) {
         // Su macOS, se abbiamo un secure bookmark, proviamo prima a ripristinarlo
-        if (Platform.isMacOS && _secureBookmarkData != null) {
+        if (_isMacOS() && _secureBookmarkData != null) {
           try {
             final secureBookmarks = SecureBookmarks();
             final resolvedUrl = await secureBookmarks.resolveBookmark(_secureBookmarkData!);
@@ -601,9 +773,9 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
           if (defaultPath == null || defaultPath.isEmpty) {
             // Fallback: usa Downloads directory
             Directory? downloadsDir;
-            
-            if (Platform.isMacOS || Platform.isLinux || Platform.isWindows) {
-              final homeDir = Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+
+            if (_isDesktopPlatform()) {
+              final homeDir = _getHomeDirectory();
               if (homeDir != null) {
                 downloadsDir = Directory('$homeDir/Downloads');
               }
@@ -627,8 +799,8 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
           // Fallback diretto a Downloads in caso di errore
           try {
             Directory? downloadsDir;
-            if (Platform.isMacOS || Platform.isLinux || Platform.isWindows) {
-              final homeDir = Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+            if (_isDesktopPlatform()) {
+              final homeDir = _getHomeDirectory();
               if (homeDir != null) {
                 downloadsDir = Directory('$homeDir/Downloads');
               }
@@ -664,7 +836,7 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
       await file.writeAsString(content, flush: true);
 
       // Su macOS, ferma l'accesso alla risorsa sicura se era stata avviata
-      if (Platform.isMacOS && _secureBookmarkData != null) {
+      if (_isMacOS() && _secureBookmarkData != null) {
         try {
           final secureBookmarks = SecureBookmarks();
           final resolvedUrl = await secureBookmarks.resolveBookmark(_secureBookmarkData!);
@@ -1577,62 +1749,7 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      appBar: AppBar(
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(
-                PhosphorIcons.fileText(),
-                color: Colors.white,
-                size: 24,
-              ),
-            ),
-            const SizedBox(width: 12),
-            const Text('Job Schedule'),
-          ],
-        ),
-        actions: [
-          FadeInRight(
-            delay: const Duration(milliseconds: 200),
-            child: Container(
-              margin: const EdgeInsets.only(right: 16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.grey.shade200,
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: IconButton(
-                icon: Icon(
-                  PhosphorIcons.clockCounterClockwise(),
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                onPressed: _showHistoryDialog,
-                tooltip: 'Cronologia',
-              ),
-            ),
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
+    return SingleChildScrollView(
         padding: const EdgeInsets.all(20.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1682,9 +1799,40 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
                                 style: Theme.of(context).textTheme.titleLarge,
                               ),
                               const SizedBox(height: 4),
-                              Text(
-                                'Inserisci i dati per generare il file con formato: [CODICE]→[LOTTO]→[PEZZI] (separati da TAB)',
-                                style: Theme.of(context).textTheme.bodyMedium,
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      'Inserisci i dati per generare il file con formato: [CODICE]→[LOTTO]→[PEZZI] (separati da TAB)',
+                                      style: Theme.of(context).textTheme.bodyMedium,
+                                    ),
+                                  ),
+                                  FadeInRight(
+                                    delay: const Duration(milliseconds: 200),
+                                    child: Container(
+                                      margin: const EdgeInsets.only(left: 16),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(12),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.grey.shade200,
+                                            blurRadius: 8,
+                                            offset: const Offset(0, 2),
+                                          ),
+                                        ],
+                                      ),
+                                      child: IconButton(
+                                        icon: Icon(
+                                          PhosphorIcons.clockCounterClockwise(),
+                                          color: Theme.of(context).colorScheme.primary,
+                                        ),
+                                        onPressed: _showHistoryDialog,
+                                        tooltip: 'Cronologia',
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ],
                           ),
@@ -1939,7 +2087,6 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
               ),
           ],
         ),
-      ),
     );
   }
 
@@ -1949,5 +2096,1076 @@ class _JobScheduleHomePageState extends State<JobScheduleHomePage> {
     _lottoController.dispose();
     _numeroPezziController.dispose();
     super.dispose();
+  }
+}
+
+class QualityMonitoringPage extends StatefulWidget {
+  const QualityMonitoringPage({super.key});
+
+  @override
+  State<QualityMonitoringPage> createState() => _QualityMonitoringPageState();
+}
+
+class _QualityMonitoringPageState extends State<QualityMonitoringPage> {
+  String _monitoringPath = '';
+  String? _monitoringBookmarkData;
+  QualityData? _currentData;
+  bool _isMonitoring = false;
+  Timer? _monitoringTimer;
+  String? _currentFileName;
+  bool _isLoading = false;
+  DateTime? _lastFileModified;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMonitoringPath();
+  }
+
+  @override
+  void dispose() {
+    _monitoringTimer?.cancel();
+    super.dispose();
+  }
+
+  bool _isMacOS() {
+    return Platform.isMacOS;
+  }
+
+  Future<void> _loadMonitoringPath() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _monitoringPath = prefs.getString('monitoring_path') ?? '';
+      _monitoringBookmarkData = prefs.getString('monitoring_bookmark');
+    });
+
+    // Se abbiamo un bookmark salvato, proviamo a risolverlo
+    await _restoreMonitoringBookmark();
+
+    if (_monitoringPath.isNotEmpty) {
+      _startMonitoring();
+    }
+  }
+
+  Future<void> _saveMonitoringPath(String path) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('monitoring_path', path);
+
+    // Salva anche il secure bookmark per macOS
+    await _saveMonitoringBookmark(path);
+  }
+
+  Future<void> _saveMonitoringBookmark(String path) async {
+    if (!_isMacOS()) return;
+
+    try {
+      final secureBookmarks = SecureBookmarks();
+      final directory = Directory(path);
+      final bookmark = await secureBookmarks.bookmark(directory);
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('monitoring_bookmark', bookmark);
+      _monitoringBookmarkData = bookmark;
+      // Bookmark salvato con successo
+    } catch (e) {
+      // Errore salvataggio bookmark: continua senza fallire
+    }
+  }
+
+  Future<void> _restoreMonitoringBookmark() async {
+    if (!_isMacOS() || _monitoringBookmarkData == null) return;
+
+    try {
+      final secureBookmarks = SecureBookmarks();
+      final resolvedUrl = await secureBookmarks.resolveBookmark(_monitoringBookmarkData!);
+
+      final bool startedAccessing = await secureBookmarks.startAccessingSecurityScopedResource(resolvedUrl);
+      if (startedAccessing) {
+        // Bookmark ripristinato con successo
+        setState(() {
+          _monitoringPath = resolvedUrl.path;
+        });
+
+        // Aggiorna il percorso salvato in SharedPreferences
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('monitoring_path', resolvedUrl.path);
+      }
+    } catch (e) {
+      // Errore ripristino bookmark: rimuovo bookmark non valido
+      // Se il bookmark non è più valido, rimuovilo
+      await _clearMonitoringBookmark();
+    }
+  }
+
+  Future<void> _clearMonitoringBookmark() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('monitoring_bookmark');
+    _monitoringBookmarkData = null;
+  }
+
+  Future<void> _selectMonitoringFolder() async {
+    try {
+      String? selectedDirectory = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: 'Seleziona cartella CSV di monitoraggio',
+      );
+
+      if (selectedDirectory != null && selectedDirectory.isNotEmpty) {
+        setState(() {
+          _monitoringPath = selectedDirectory;
+        });
+        await _saveMonitoringPath(selectedDirectory);
+        _showSnackBar('✅ Cartella monitoraggio selezionata', const Color(0xFF059669));
+        _startMonitoring();
+      } else {
+        _showSnackBar('ℹ️ Selezione annullata', const Color(0xFF64748B));
+      }
+    } catch (e) {
+      _showSnackBar('❌ Errore selezione cartella: ${e.toString()}', const Color(0xFFDC2626));
+    }
+  }
+
+  void _startMonitoring() {
+    if (_monitoringPath.isEmpty) return;
+
+    setState(() {
+      _isMonitoring = true;
+    });
+
+    _loadLatestCSVData();
+    _monitoringTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      _loadLatestCSVData();
+    });
+
+    _showSnackBar('🔄 Monitoraggio avviato', const Color(0xFF059669));
+  }
+
+  void _stopMonitoring() {
+    _monitoringTimer?.cancel();
+    setState(() {
+      _isMonitoring = false;
+    });
+    _showSnackBar('⏸️ Monitoraggio fermato', const Color(0xFFEA580C));
+  }
+
+  Future<void> _loadLatestCSVData() async {
+    if (_isLoading) return;
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      // Controlla se il percorso di monitoraggio è valido
+      if (_monitoringPath.isEmpty) {
+        setState(() {
+          _isLoading = false;
+        });
+        return;
+      }
+
+      final directory = Directory(_monitoringPath);
+      if (!await directory.exists()) {
+        _showSnackBar('❌ Cartella non esistente o non accessibile', const Color(0xFFDC2626));
+        _stopMonitoring();
+        setState(() {
+          _isLoading = false;
+        });
+        return;
+      }
+
+      // Test di accesso alla directory
+      try {
+        directory.listSync();
+      } catch (e) {
+        _showSnackBar('❌ Accesso negato alla cartella. Seleziona nuovamente la cartella.', const Color(0xFFDC2626));
+        _stopMonitoring();
+        setState(() {
+          _isLoading = false;
+        });
+        return;
+      }
+
+      final csvFiles = directory
+          .listSync()
+          .where((file) => file.path.toLowerCase().endsWith('.csv'))
+          .map((file) => file as File)
+          .toList();
+
+      if (csvFiles.isEmpty) {
+        setState(() {
+          _currentData = null;
+          _currentFileName = null;
+        });
+        return;
+      }
+
+      csvFiles.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+      final latestFile = csvFiles.first;
+      final fileName = path_lib.basename(latestFile.path);
+      final fileModified = latestFile.lastModifiedSync();
+
+      // Controlla se il file è cambiato (nome diverso o data modifica diversa)
+      bool fileChanged = false;
+
+      if (_currentFileName != fileName) {
+        fileChanged = true;
+        setState(() {
+          _currentFileName = fileName;
+        });
+      }
+
+      if (_lastFileModified == null || _lastFileModified != fileModified) {
+        fileChanged = true;
+        _lastFileModified = fileModified;
+      }
+
+
+      // Aggiorna i dati solo se il file è cambiato
+      if (fileChanged) {
+        final content = await _readFileWithFallbackEncoding(latestFile);
+        final data = _parseCSVData(content);
+
+        setState(() {
+          _currentData = data;
+        });
+      }
+
+    } catch (e) {
+      _showSnackBar('⚠️ Errore lettura CSV: ${e.toString()}', const Color(0xFFEA580C));
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  QualityData _parseCSVData(String csvContent) {
+    final List<List<dynamic>> rows = const CsvToListConverter(fieldDelimiter: ';').convert(csvContent);
+
+    if (rows.isEmpty) {
+      return QualityData(
+        totalPieces: 0,
+        goodPieces: 0,
+        rejectedPieces: 0,
+        rejects: [],
+        latestRejects: [],
+        lastUpdate: DateTime.now(),
+      );
+    }
+
+    // Trova gli indici delle colonne nel header
+    final header = rows[0];
+    int? stazioneIndex, esitoIndex, codiceScatoIndex, descrizioneIndex, progressivoIndex, dataOraIndex;
+
+    for (int i = 0; i < header.length; i++) {
+      final colName = header[i].toString().toLowerCase();
+      if (colName.contains('stazione') && !colName.contains('id')) {
+        stazioneIndex = i;
+      } else if (colName.contains('esito')) {
+        esitoIndex = i;
+      } else if (colName.contains('codice') && colName.contains('scarto')) {
+        codiceScatoIndex = i;
+      } else if (colName.contains('descrizione') && colName.contains('scarto')) {
+        descrizioneIndex = i;
+      } else if (colName.contains('progressivo')) {
+        progressivoIndex = i;
+      } else if (colName.contains('data') && colName.contains('ora')) {
+        dataOraIndex = i;
+      }
+    }
+
+
+    int totalPieces = 0;
+    int goodPieces = 0;
+    int rejectedPieces = 0;
+    final Map<String, Reject> rejectDetails = {};
+    final List<RejectDetail> latestRejectsList = [];
+
+    // Analizza ogni riga dei dati
+    for (int i = 1; i < rows.length; i++) {
+      final row = rows[i];
+      if (row.length < header.length) continue;
+
+      try {
+        // Controlla l'esito e la stazione
+        final esito = esitoIndex != null ? row[esitoIndex].toString().trim() : '';
+        final stazione = stazioneIndex != null ? row[stazioneIndex].toString().trim() : '';
+
+        // Debug per le prime 3 righe
+
+        // Conta solo i pezzi che passano dalla stazione "Periferico" (controllo finale)
+        if (stazione.toLowerCase().contains('periferico')) {
+          totalPieces++;
+
+          if (esito.toLowerCase() == 'buono') {
+            goodPieces++;
+          }
+        }
+
+        // Conta gli scarti da TUTTE le stazioni
+        if (esito.toLowerCase() == 'scarto') {
+          rejectedPieces++;
+        }
+
+        // Raccogli tutti gli scarti (da tutte le stazioni)
+        if (esito.toLowerCase() == 'scarto') {
+
+          // Raccoglie dettagli dello scarto
+          final codiceScarto = codiceScatoIndex != null ? row[codiceScatoIndex].toString().trim() : '';
+          final descrizioneScarto = descrizioneIndex != null ? row[descrizioneIndex].toString().trim() : '';
+          final progressivo = progressivoIndex != null ? row[progressivoIndex].toString().trim() : '';
+          final dataOra = dataOraIndex != null ? row[dataOraIndex].toString().trim() : '';
+
+          // Aggiunge ai dettagli degli ultimi scarti (massimo 10)
+          DateTime timestamp = DateTime.now();
+          if (dataOra.isNotEmpty) {
+            try {
+              // Cerca di parsare la data nel formato DD/MM/YYYY HH:mm:ss
+              final parts = dataOra.split(' ');
+              if (parts.length >= 2) {
+                final dateParts = parts[0].split('/');
+                final timeParts = parts[1].split(':');
+                if (dateParts.length == 3 && timeParts.length >= 2) {
+                  timestamp = DateTime(
+                    int.parse(dateParts[2]), // year
+                    int.parse(dateParts[1]), // month
+                    int.parse(dateParts[0]), // day
+                    int.parse(timeParts[0]), // hour
+                    int.parse(timeParts[1]), // minute
+                    timeParts.length > 2 ? int.parse(timeParts[2]) : 0, // second
+                  );
+                }
+              }
+            } catch (e) {
+              // Se il parsing fallisce, usa il timestamp corrente
+              timestamp = DateTime.now();
+            }
+          }
+
+          latestRejectsList.add(RejectDetail(
+            station: stazione,
+            code: codiceScarto.isNotEmpty ? codiceScarto : 'N/A',
+            description: descrizioneScarto.isNotEmpty && descrizioneScarto != '0' ? descrizioneScarto : 'N/A',
+            timestamp: timestamp,
+            progressivo: progressivo.isNotEmpty ? progressivo : 'N/A',
+          ));
+
+          String rejectKey = stazione;
+          if (codiceScarto.isNotEmpty) {
+            rejectKey += ' (Codice: $codiceScarto)';
+          }
+          if (descrizioneScarto.isNotEmpty && descrizioneScarto != '0') {
+            rejectKey += ' - $descrizioneScarto';
+          }
+
+          if (rejectKey.isEmpty) rejectKey = 'Scarto sconosciuto';
+
+          if (rejectDetails.containsKey(rejectKey)) {
+            final existing = rejectDetails[rejectKey]!;
+            rejectDetails[rejectKey] = Reject(
+              reason: existing.reason,
+              count: existing.count + 1,
+              timestamp: DateTime.now(),
+            );
+          } else {
+            rejectDetails[rejectKey] = Reject(
+              reason: rejectKey,
+              count: 1,
+              timestamp: DateTime.now(),
+            );
+          }
+        }
+      } catch (e) {
+        // Se non riesce a parsare una riga, continua con la prossima
+        continue;
+      }
+    }
+
+    // Converte la mappa in lista e ordina per conteggio
+    final rejects = rejectDetails.values.toList();
+    rejects.sort((a, b) => b.count.compareTo(a.count));
+
+    // Ordina gli scarti dettagliati per timestamp (più recenti prima) e prende solo gli ultimi 10
+    latestRejectsList.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    final latestRejects = latestRejectsList.take(10).toList();
+
+
+    return QualityData(
+      totalPieces: totalPieces,
+      goodPieces: goodPieces,
+      rejectedPieces: rejectedPieces,
+      rejects: rejects,
+      latestRejects: latestRejects,
+      lastUpdate: DateTime.now(),
+    );
+  }
+
+  Future<String> _readFileWithFallbackEncoding(File file) async {
+    try {
+      // Prova prima con UTF-8
+      return await file.readAsString();
+    } catch (e) {
+      try {
+        // Fallback: leggi come bytes e prova Latin-1
+        final bytes = await file.readAsBytes();
+        return latin1.decode(bytes);
+      } catch (e2) {
+        try {
+          // Ultimo tentativo: rimuovi caratteri non validi
+          final bytes = await file.readAsBytes();
+          return utf8.decode(bytes, allowMalformed: true);
+        } catch (e3) {
+          throw Exception('Impossibile leggere il file con nessun encoding supportato');
+        }
+      }
+    }
+  }
+
+  void _showSnackBar(String message, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          message,
+          style: const TextStyle(
+            fontWeight: FontWeight.w500,
+            color: Colors.white,
+          ),
+        ),
+        backgroundColor: color,
+        duration: const Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        margin: const EdgeInsets.all(16),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          FadeInDown(
+            delay: const Duration(milliseconds: 100),
+            child: Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    Theme.of(context).colorScheme.tertiary.withValues(alpha: 0.1),
+                    Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(
+                  color: Theme.of(context).colorScheme.tertiary.withValues(alpha: 0.2),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.tertiary,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Icon(
+                          PhosphorIcons.chartLine(),
+                          color: Colors.white,
+                          size: 24,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Monitoraggio Qualità Real-Time',
+                              style: Theme.of(context).textTheme.titleLarge,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Monitora i file CSV generati dalla macchina di controllo',
+                              style: Theme.of(context).textTheme.bodyMedium,
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (_isMonitoring) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.green.shade100,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: Colors.green.shade300),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color: Colors.green.shade600,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                'ATTIVO',
+                                style: TextStyle(
+                                  color: Colors.green.shade700,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          _monitoringPath.isEmpty
+                              ? PhosphorIcons.folder()
+                              : PhosphorIcons.folderSimple(),
+                          color: _monitoringPath.isEmpty
+                              ? Colors.grey.shade400
+                              : Theme.of(context).colorScheme.tertiary,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            _monitoringPath.isEmpty
+                                ? 'Seleziona cartella CSV'
+                                : _monitoringPath,
+                            style: TextStyle(
+                              color: _monitoringPath.isEmpty
+                                  ? Colors.grey.shade500
+                                  : Theme.of(context).colorScheme.onSurface,
+                              fontWeight: _monitoringPath.isEmpty
+                                  ? FontWeight.w400
+                                  : FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: OutlinedButton.icon(
+                          onPressed: _selectMonitoringFolder,
+                          icon: Icon(PhosphorIcons.folderOpen()),
+                          label: const Text('Scegli Cartella'),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _monitoringPath.isEmpty
+                              ? null
+                              : (_isMonitoring ? _stopMonitoring : _startMonitoring),
+                          icon: Icon(_isMonitoring ? PhosphorIcons.pause() : PhosphorIcons.play()),
+                          label: Text(_isMonitoring ? 'Stop' : 'Start'),
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            backgroundColor: _isMonitoring
+                                ? Colors.orange.shade600
+                                : Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          if (_currentData != null) ...[
+            const SizedBox(height: 24),
+
+            FadeInUp(
+              delay: const Duration(milliseconds: 200),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _buildStatCard(
+                      icon: PhosphorIcons.package(),
+                      title: 'Pezzi Totali',
+                      value: _currentData!.totalPieces.toString(),
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildStatCard(
+                      icon: PhosphorIcons.checkCircle(),
+                      title: 'Pezzi Buoni',
+                      value: _currentData!.goodPieces.toString(),
+                      color: Colors.green,
+                      subtitle: '${_currentData!.acceptanceRate.toStringAsFixed(1)}%',
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildStatCard(
+                      icon: PhosphorIcons.xCircle(),
+                      title: 'Scarti',
+                      value: _currentData!.rejectedPieces.toString(),
+                      color: Colors.red,
+                      subtitle: '${_currentData!.rejectionRate.toStringAsFixed(1)}%',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            if (_currentData!.rejects.isNotEmpty) ...[
+              const SizedBox(height: 24),
+              FadeInUp(
+                delay: const Duration(milliseconds: 300),
+                child: Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.grey.shade200),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.grey.shade100,
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.red.shade100,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Icon(
+                              PhosphorIcons.warning(),
+                              color: Colors.red.shade600,
+                              size: 20,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            'Motivi Scarto',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      ListView.separated(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: _currentData!.rejects.length,
+                        separatorBuilder: (context, index) => const SizedBox(height: 8),
+                        itemBuilder: (context, index) {
+                          final reject = _currentData!.rejects[index];
+                          return Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.red.shade50,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.red.shade200),
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 24,
+                                  height: 24,
+                                  decoration: BoxDecoration(
+                                    color: Colors.red.shade600,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      reject.count.toString(),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    reject.reason,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w500,
+                                      color: Colors.red.shade800,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+
+            // Sezione Ultimi 10 Scarti
+            if (_currentData!.latestRejects.isNotEmpty) ...[
+              const SizedBox(height: 24),
+              FadeInUp(
+                delay: const Duration(milliseconds: 350),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.blue.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.shade600,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Icon(
+                              PhosphorIcons.clock(),
+                              color: Colors.white,
+                              size: 20,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            'Ultimi 10 Scarti',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      ListView.separated(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: _currentData!.latestRejects.length,
+                        separatorBuilder: (context, index) => const SizedBox(height: 8),
+                        itemBuilder: (context, index) {
+                          final reject = _currentData!.latestRejects[index];
+                          return Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.blue.shade200),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: Colors.blue.shade100,
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        'Pezzo ${reject.progressivo}',
+                                        style: TextStyle(
+                                          color: Colors.blue.shade700,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                    const Spacer(),
+                                    Text(
+                                      '${reject.timestamp.day.toString().padLeft(2, '0')}/${reject.timestamp.month.toString().padLeft(2, '0')}/${reject.timestamp.year} ${reject.timestamp.hour.toString().padLeft(2, '0')}:${reject.timestamp.minute.toString().padLeft(2, '0')}',
+                                      style: TextStyle(
+                                        color: Colors.grey.shade600,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    Icon(
+                                      PhosphorIcons.warning(),
+                                      color: Colors.orange.shade600,
+                                      size: 16,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      'Codice: ${reject.code}',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w500,
+                                        color: Colors.grey.shade800,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                if (reject.description != 'N/A') ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    reject.description,
+                                    style: TextStyle(
+                                      color: Colors.grey.shade700,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+
+            const SizedBox(height: 24),
+            FadeInUp(
+              delay: const Duration(milliseconds: 400),
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      Colors.grey.shade100,
+                      Colors.grey.shade50,
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      PhosphorIcons.clock(),
+                      color: Colors.grey.shade600,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Ultimo aggiornamento',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        Text(
+                          '${_currentData!.lastUpdate.hour.toString().padLeft(2, '0')}:${_currentData!.lastUpdate.minute.toString().padLeft(2, '0')}:${_currentData!.lastUpdate.second.toString().padLeft(2, '0')}',
+                          style: TextStyle(
+                            color: Colors.grey.shade800,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Spacer(),
+                    if (_currentFileName != null) ...[
+                      Icon(
+                        PhosphorIcons.fileText(),
+                        color: Colors.grey.shade600,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          _currentFileName!,
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: 12,
+                            fontStyle: FontStyle.italic,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+
+          if (_currentData == null && _isMonitoring) ...[
+            const SizedBox(height: 40),
+            FadeInUp(
+              delay: const Duration(milliseconds: 200),
+              child: Container(
+                height: 200,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      if (_isLoading) ...[
+                        const CircularProgressIndicator(),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Caricamento dati...',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ] else ...[
+                        Icon(
+                          PhosphorIcons.fileX(),
+                          size: 48,
+                          color: Colors.grey.shade400,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Nessun file CSV trovato',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Verifica che ci siano file CSV nella cartella selezionata',
+                          style: TextStyle(
+                            color: Colors.grey.shade500,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatCard({
+    required IconData icon,
+    required String title,
+    required String value,
+    required Color color,
+    String? subtitle,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.shade100,
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              icon,
+              color: color,
+              size: 20,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+          Text(
+            title,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              fontWeight: FontWeight.w500,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          if (subtitle != null) ...[
+            const SizedBox(height: 2),
+            Text(
+              subtitle,
+              style: TextStyle(
+                fontSize: 10,
+                color: color,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 }
